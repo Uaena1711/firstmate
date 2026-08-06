@@ -247,6 +247,21 @@ The Kimi installer requires an existing regular non-symlink `~/.kimi-code/config
 Its `remove` action excises only the marker-delimited Firstmate region and removes Firstmate's hook files.
 For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
 
+## Bedrock provider (config/crew-bedrock)
+
+`config/crew-bedrock` is an optional local, gitignored file that routes claude-harness crewmates through AWS Bedrock instead of the Anthropic API.
+When present and the resolved harness is `claude`, `fm-spawn.sh` merges an `env` block into the worktree's `.claude/settings.local.json` before launching the agent.
+The file uses plain `KEY=VALUE` format:
+
+```
+AWS_PROFILE=my-profile
+AWS_REGION=us-east-1
+```
+
+Both keys are optional; `CLAUDE_CODE_USE_BEDROCK=1` is always set when the file exists.
+Other harnesses are unaffected.
+The merge uses `jq` when available, falling back to `python3`.
+
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
