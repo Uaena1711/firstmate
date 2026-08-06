@@ -1821,6 +1821,31 @@ if [ "$KIND" != secondmate ]; then
       cat > "$WT/.claude/settings.local.json" <<EOF
 {"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"$j_submit"}]}],"Stop":[{"hooks":[{"type":"command","command":"$j_stop"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"$j_stopfail"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"$j_sessionend"}]}]}}
 EOF
+      # Bedrock provider: merge env block when config/crew-bedrock exists
+      if [ -f "$FM_HOME/config/crew-bedrock" ]; then
+        _br_profile="" _br_region=""
+        while IFS='=' read -r _br_key _br_val; do
+          case "$_br_key" in
+            AWS_PROFILE) _br_profile="$_br_val" ;;
+            AWS_REGION)  _br_region="$_br_val" ;;
+          esac
+        done < "$FM_HOME/config/crew-bedrock"
+        _br_env="{\"CLAUDE_CODE_USE_BEDROCK\":\"1\""
+        [ -n "$_br_region" ] && _br_env="$_br_env,\"AWS_REGION\":\"$_br_region\""
+        [ -n "$_br_profile" ] && _br_env="$_br_env,\"AWS_PROFILE\":\"$_br_profile\""
+        _br_env="$_br_env}"
+        if command -v jq >/dev/null 2>&1; then
+          jq --argjson env "$_br_env" '. + {env: $env}' "$WT/.claude/settings.local.json" > "$WT/.claude/settings.local.json.tmp" \
+            && mv "$WT/.claude/settings.local.json.tmp" "$WT/.claude/settings.local.json"
+        else
+          python3 -c "
+import json, sys
+with open(sys.argv[1], 'r') as f: d = json.load(f)
+d['env'] = json.loads(sys.argv[2])
+with open(sys.argv[1], 'w') as f: json.dump(d, f)
+" "$WT/.claude/settings.local.json" "$_br_env"
+        fi
+      fi
       exclude_path '.claude/settings.local.json'
       ;;
     opencode*)
