@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--bedrock[=<aws-profile>]]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--bedrock[=<aws-profile>]]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -22,6 +22,17 @@
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed.
+#   --bedrock routes this one claude crewmate or scout through AWS Bedrock. It is
+#   the only activation: without the flag no provider env is written, whatever
+#   config/crew-bedrock holds, so the default stays the ordinary Anthropic
+#   account. Bare --bedrock takes AWS_PROFILE and AWS_REGION from the optional
+#   KEY=VALUE file config/crew-bedrock; --bedrock=<aws-profile> overrides that
+#   profile. The AWS profile is required, the region optional, and the spawn
+#   refuses before creating an endpoint when jq is missing, no profile resolves,
+#   the harness is not claude, or the spawn is a --secondmate. The resolved env
+#   is merged into the worktree's .claude/settings.local.json before launch,
+#   because Claude Code picks its provider at startup. bin/fm-bedrock.sh does the
+#   same for a persistent project directory outside spawn.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -112,7 +123,7 @@
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
-#   source of truth; shared --scout/--harness/--model/--effort/--backend/--mode/--yolo
+#   source of truth; shared --scout/--harness/--model/--effort/--backend/--mode/--yolo/--bedrock
 #   applies to every pair. A ship batch therefore carries one delivery contract, and each
 #   pair still checks it against its own brief; a batch spanning modes is two invocations.
 #   If config/crew-dispatch.json exists, shared --harness is required for crewmate
@@ -225,6 +236,8 @@ BACKEND_ARG=
 MODE=
 YOLO=
 TRACEPARENT_ARG=
+BEDROCK_PROFILE_ARG=
+BEDROCK_SET=0
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
@@ -269,6 +282,14 @@ for a in "$@"; do
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
     --traceparent) want_value=traceparent ;;
     --traceparent=*) TRACEPARENT_ARG=${a#--traceparent=}; TRACEPARENT_SET=1 ;;
+    # --bedrock is a boolean opt-in, so the bare form never consumes the next
+    # argument; the =<profile> form overrides config/crew-bedrock's AWS_PROFILE.
+    --bedrock) BEDROCK_SET=1 ;;
+    --bedrock=*)
+      BEDROCK_SET=1
+      BEDROCK_PROFILE_ARG=${a#--bedrock=}
+      [ -n "$BEDROCK_PROFILE_ARG" ] || { echo "error: --bedrock=<aws-profile> requires a non-empty value" >&2; exit 1; }
+      ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -752,6 +773,13 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   # spanning several modes is two invocations rather than a silent mixed dispatch.
   [ "$MODE_SET" -eq 0 ] || shared_args+=(--mode "$MODE")
   [ "$YOLO_SET" -eq 0 ] || shared_args+=(--yolo "$YOLO")
+  if [ "$BEDROCK_SET" -eq 1 ]; then
+    if [ -n "$BEDROCK_PROFILE_ARG" ]; then
+      shared_args+=("--bedrock=$BEDROCK_PROFILE_ARG")
+    else
+      shared_args+=(--bedrock)
+    fi
+  fi
   for pair in "${POS[@]}"; do
     case "$pair" in
       *=*) : ;;
@@ -899,6 +927,44 @@ esac
 if [ "$HARNESS" = pi-signed ] && ! command -v pi-signed >/dev/null 2>&1; then
   echo "error: pi-signed executable not found on PATH; install the signed Pi wrapper or select a different verified harness" >&2
   exit 1
+fi
+
+# Bedrock is an explicit per-spawn opt-in. Without --bedrock no provider env is
+# written at all, whatever config/crew-bedrock holds, so the standing default
+# stays the ordinary Anthropic account. Resolve the profile and region here,
+# before any endpoint exists, so an unresolvable profile refuses rather than
+# leaving a live worker on a half-configured provider.
+BEDROCK_PROFILE=
+BEDROCK_REGION=
+if [ "$BEDROCK_SET" -eq 1 ]; then
+  [ "$KIND" != secondmate ] || {
+    echo "error: --bedrock applies to crewmate and scout spawns; a secondmate home configures the provider for its own crewmates" >&2
+    exit 1
+  }
+  case "$HARNESS" in
+    claude*) ;;
+    *)
+      echo "error: --bedrock applies only to the claude harness; '$HARNESS' has no Bedrock provider switch" >&2
+      exit 1
+      ;;
+  esac
+  command -v jq >/dev/null 2>&1 || {
+    echo "error: --bedrock requires jq to merge the provider env into the worktree's .claude/settings.local.json" >&2
+    exit 1
+  }
+  if [ -f "$CONFIG/crew-bedrock" ]; then
+    while IFS='=' read -r bedrock_key bedrock_value; do
+      case "$bedrock_key" in
+        AWS_PROFILE) BEDROCK_PROFILE=$bedrock_value ;;
+        AWS_REGION)  BEDROCK_REGION=$bedrock_value ;;
+      esac
+    done < "$CONFIG/crew-bedrock"
+  fi
+  [ -z "$BEDROCK_PROFILE_ARG" ] || BEDROCK_PROFILE=$BEDROCK_PROFILE_ARG
+  [ -n "$BEDROCK_PROFILE" ] || {
+    echo "error: --bedrock needs an AWS profile; pass --bedrock=<aws-profile> or record AWS_PROFILE=<name> in config/crew-bedrock" >&2
+    exit 1
+  }
 fi
 
 # config/secondmate-harness may carry optional model/effort tokens alongside the
@@ -1821,29 +1887,22 @@ if [ "$KIND" != secondmate ]; then
       cat > "$WT/.claude/settings.local.json" <<EOF
 {"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"$j_submit"}]}],"Stop":[{"hooks":[{"type":"command","command":"$j_stop"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"$j_stopfail"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"$j_sessionend"}]}]}}
 EOF
-      # Bedrock provider: merge env block when config/crew-bedrock exists
-      if [ -f "$FM_HOME/config/crew-bedrock" ]; then
-        _br_profile="" _br_region=""
-        while IFS='=' read -r _br_key _br_val; do
-          case "$_br_key" in
-            AWS_PROFILE) _br_profile="$_br_val" ;;
-            AWS_REGION)  _br_region="$_br_val" ;;
-          esac
-        done < "$FM_HOME/config/crew-bedrock"
-        _br_env="{\"CLAUDE_CODE_USE_BEDROCK\":\"1\""
-        [ -n "$_br_region" ] && _br_env="$_br_env,\"AWS_REGION\":\"$_br_region\""
-        [ -n "$_br_profile" ] && _br_env="$_br_env,\"AWS_PROFILE\":\"$_br_profile\""
-        _br_env="$_br_env}"
-        if command -v jq >/dev/null 2>&1; then
-          jq --argjson env "$_br_env" '. + {env: $env}' "$WT/.claude/settings.local.json" > "$WT/.claude/settings.local.json.tmp" \
-            && mv "$WT/.claude/settings.local.json.tmp" "$WT/.claude/settings.local.json"
+      # Merge the opted-in Bedrock provider env into the same file, keeping the
+      # hooks above intact. This has to land before the agent process starts,
+      # because Claude Code picks its provider at startup and a later write would
+      # need a restart to take effect.
+      if [ "$BEDROCK_SET" -eq 1 ]; then
+        bedrock_tmp="$WT/.claude/settings.local.json.tmp"
+        if jq --arg profile "$BEDROCK_PROFILE" --arg region "$BEDROCK_REGION" '
+             .env = ((.env // {})
+               + {CLAUDE_CODE_USE_BEDROCK: "1", AWS_PROFILE: $profile}
+               + (if $region == "" then {} else {AWS_REGION: $region} end))
+           ' "$WT/.claude/settings.local.json" > "$bedrock_tmp"; then
+          mv "$bedrock_tmp" "$WT/.claude/settings.local.json"
         else
-          python3 -c "
-import json, sys
-with open(sys.argv[1], 'r') as f: d = json.load(f)
-d['env'] = json.loads(sys.argv[2])
-with open(sys.argv[1], 'w') as f: json.dump(d, f)
-" "$WT/.claude/settings.local.json" "$_br_env"
+          rm -f "$bedrock_tmp"
+          echo "error: could not merge the Bedrock provider env into $WT/.claude/settings.local.json" >&2
+          exit 1
         fi
       fi
       exclude_path '.claude/settings.local.json'

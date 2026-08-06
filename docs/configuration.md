@@ -236,20 +236,22 @@ The Kimi installer requires an existing regular non-symlink `~/.kimi-code/config
 Its `remove` action excises only the marker-delimited Firstmate region and removes Firstmate's hook files.
 For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
 
-## Bedrock provider (config/crew-bedrock)
+## Bedrock provider (--bedrock, config/crew-bedrock)
 
-`config/crew-bedrock` is an optional local, gitignored file that routes claude-harness crewmates through AWS Bedrock instead of the Anthropic API.
-When present and the resolved harness is `claude`, `fm-spawn.sh` merges an `env` block into the worktree's `.claude/settings.local.json` before launching the agent.
-The file uses plain `KEY=VALUE` format:
+Crewmates use the ordinary Anthropic account by default.
+AWS Bedrock is a per-spawn opt-in: only `fm-spawn.sh --bedrock` routes a claude crewmate or scout through Bedrock, and a spawn without that flag writes no provider settings at all.
+
+`config/crew-bedrock` is an optional local, gitignored file holding the AWS profile and region that flag reuses, in plain `KEY=VALUE` format:
 
 ```
 AWS_PROFILE=my-profile
 AWS_REGION=us-east-1
 ```
 
-Both keys are optional; `CLAUDE_CODE_USE_BEDROCK=1` is always set when the file exists.
-Other harnesses are unaffected.
-The merge uses `jq` when available, falling back to `python3`.
+The file is a convenience, never an activation switch: its presence alone changes nothing.
+`--bedrock=<aws-profile>` overrides the recorded profile, an AWS profile from one source or the other is required, and the region is optional.
+`bin/fm-bedrock.sh` applies the same provider settings to a persistent project directory outside spawn, and can also discover Bedrock inference profiles, report status, and remove the settings again.
+Each script's header and `--help` own their exact flags, paths, and merge behavior.
 
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
