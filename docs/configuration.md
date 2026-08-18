@@ -136,6 +136,16 @@ It does not set `commands.test` to a complete `tests/*.test.sh` walk.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the firstmate-specific local test policy and entry points.
 Portable shard evidence and coverage rules are in [fm-test-portable-shards.md](fm-test-portable-shards.md); [herdr-backend.md](herdr-backend.md#destructive-lab-safety) owns the real-Herdr lane's isolation boundary, and [runtime-backends.md](verification/runtime-backends.md#herdr) owns active evidence.
 
+## Autostash record (data/pending-autostash.meta)
+
+`bin/fm-update.sh --autostash` writes this per-target record under the target's own `data/` before stashing its tracked local changes for a fast-forward or `--rebase` replay, and removes it only after confirming the stash was restored cleanly.
+It never appears without that flag: the default fast-forward path, and every automatic sweep (`fm-spawn.sh`'s launch-time sync, `fm-bootstrap.sh`'s secondmate-convergence sweep), never stash and so never write it.
+The record is a `key=value` file an operator can read directly: `target` (the git working directory that was stashed), `stash_sha` (the exact stash commit, not merely "a stash is pending"), `created` (a UTC timestamp), and `message` (the stash message `git stash list` shows).
+Its presence blocks a second `--autostash` run against the same target until it clears, and `bin/fm-bootstrap.sh` reports it at every session start as `AUTOSTASH_PENDING: ...` (the `bootstrap-diagnostics` skill owns the response).
+To recover by hand: `git -C <target> stash apply <stash_sha>` (not `stash pop` - it does not accept a bare commit, only a `stash@{N}` reference), resolve any conflict, confirm the change is what you expect, then delete the record file.
+`git -C <target> stash show -p <stash_sha>` inspects the stashed diff first without applying it.
+`bin/fm-ff-lib.sh`'s header owns the exact write-before-stash, restore, and conflict-preservation mechanics.
+
 ## Captain Preferences (data/captain.md / data/captain-shared.md)
 
 Domain-local preferences for one captain's fleet live locally in each home's `data/captain.md`; it is gitignored and printed in the session-start context digest after `data/projects.md` and optional `data/secondmates.md`.

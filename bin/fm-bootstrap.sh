@@ -13,6 +13,7 @@
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
 #                 "PR_CHECK_MIGRATION: <private remediation>",
 #                 "TANGLE: <remediation>",
+#                 "AUTOSTASH_PENDING: <remediation>",
 #                 "SECONDMATE_SYNC: secondmate <id>: skipped: <reason>",
 #                 "NUDGE_SECONDMATES: secondmate <id>: send failed: <reason>",
 #                 "BOOTSTRAP_INFO: nudged fm-<id> with '<message>'",
@@ -48,6 +49,10 @@
 #          A TANGLE line means the firstmate primary checkout (FM_ROOT) is stranded
 #          on a feature branch instead of its default branch - a crewmate's work
 #          landed in the primary instead of its own worktree; restore it per the line.
+#          An AUTOSTASH_PENDING line means THIS home's own data/ still has an
+#          outstanding bin/fm-update.sh --autostash record (bin/fm-ff-lib.sh
+#          owns exact mechanics); restore it per the line before running
+#          autostash again against this home.
 #          treehouse is also MISSING when its installed version lacks
 #          "treehouse get --lease" support.
 #          no-mistakes is also MISSING when its installed version is older than
@@ -1171,6 +1176,24 @@ detect_local_config() {
       echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - read-only session must leave restore work to the session holding the fleet lock"
     else
       echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - restore the primary with: git -C $FM_ROOT checkout $tangle_default, then re-validate the branch in a proper worktree"
+    fi
+  fi
+  # Outstanding autostash record: bin/fm-update.sh --autostash may have stashed
+  # this home's tracked local changes before a fast-forward and not yet
+  # restored them (an interrupted run, or a restore conflict left for a human -
+  # see bin/fm-ff-lib.sh's ff_autostash_create/ff_autostash_restore). The
+  # record always lives at THIS home's own data/, written before the stash and
+  # cleared only after a confirmed restore, so its mere presence here means
+  # this home has one outstanding, regardless of which session created it.
+  autostash_record="$DATA/$FF_AUTOSTASH_RECORD_NAME"
+  if [ -f "$autostash_record" ]; then
+    autostash_sha=$(fm_meta_get "$autostash_record" stash_sha)
+    autostash_target=$(fm_meta_get "$autostash_record" target)
+    [ -n "$autostash_target" ] || autostash_target="$FM_HOME"
+    if [ -n "$autostash_sha" ]; then
+      echo "AUTOSTASH_PENDING: stash $autostash_sha since $(fm_meta_get "$autostash_record" created || echo "an unknown time") - finish with: git -C $autostash_target stash apply $autostash_sha, then remove $autostash_record"
+    else
+      echo "AUTOSTASH_PENDING: unreadable record at $autostash_record - inspect and resolve by hand before running autostash again"
     fi
   fi
   crew=

@@ -16,9 +16,9 @@ Firstmate is its own repo, behind the same no-mistakes gate as any project, so n
 Only `AGENTS.md`, `bin/`, and `.agents/skills/` are a running firstmate instruction surface; public `skills/` is installer-facing and is not loaded by firstmate.
 This skill performs that pull for the running main firstmate and every secondmate, without disturbing any in-flight work.
 
-The update is **fast-forward only** - the same sanctioned self-write as the fleet sync firstmate already runs.
-For a remote route, it updates the configured Firstmate code root on that host from its own origin, then guardedly fast-forwards the persistent home to that code-root commit.
-It never forces, never creates a merge commit, never stashes, and advances a target only on a clean fast-forward; anything dirty, diverged, offline, or on the wrong branch is skipped and reported.
+The update is **fast-forward only by default** - the same sanctioned self-write as the fleet sync firstmate already runs.
+For a remote route, it updates the configured Firstmate code root on that host from its own origin, then guardedly fast-forwards the persistent home to that code-root commit; that route never sees the two opt-in flags below.
+Without flags it never forces, never creates a merge commit, never stashes, and advances a target only on a clean fast-forward; anything dirty, diverged, offline, or on the wrong branch is skipped and reported.
 A tracked-files fast-forward leaves the gitignored operational dirs (data/, state/, config/, projects/, .no-mistakes/) untouched, so a secondmate's in-flight work is never disrupted.
 This touches only the firstmate repo and its own worktrees, never anything under `projects/`.
 
@@ -32,6 +32,7 @@ This touches only the firstmate repo and its own worktrees, never anything under
    It prints one status line per target (`updated <old>..<new>` / `already current` / `skipped: <reason>`), followed by two action lines that tell you exactly what to do next:
    - `reread-firstmate: yes|no`
    - `nudge-secondmates: fm-<id>...|none`
+   Add `--autostash` and/or `--rebase` to advance a target that is dirty and/or diverged instead of skipping it - both are opt-in, off by default, and safe to compose; run `bin/fm-update.sh --help` for the exact mechanics, and only offer them when the captain wants a specific skipped target advanced rather than as a routine default.
 
 2. **Re-read AGENTS.md if your own instructions changed.**
    When the updater printed `reread-firstmate: yes`, the tracked instruction surface (`AGENTS.md`, `bin/`, or `.agents/skills/`) just advanced under you.
@@ -54,9 +55,14 @@ This touches only the firstmate repo and its own worktrees, never anything under
 
 ## Safety
 
-- **Fast-forward only.**
-  A target that has diverged, is dirty, is offline, or is on a non-default branch is skipped and reported, never forced or stashed.
+- **Fast-forward only by default.**
+  Without flags, a target that has diverged, is dirty, is offline, or is on a non-default branch is skipped and reported, never forced or stashed.
   Nothing with unlanded work is ever discarded - this is prime directive #3.
+- **`--autostash` and `--rebase` are opt-in, never automatic.**
+  Only this explicit, operator-invoked run can stash or rebase a target; `fm-spawn.sh`'s launch-time sync and `fm-bootstrap.sh`'s secondmate-convergence sweep never pass either flag, so a background sweep can never stash or rebase on its own initiative.
+  `--autostash` stashes ONLY tracked changes (never untracked files) behind a durable per-target record naming the exact stash commit, so an interrupted run is always recoverable and a later session start reports it; a restore conflict keeps both the stash and the record for a human to finish by hand rather than dropping anything.
+  `--rebase` replays a diverged target's local commits onto the new base and aborts cleanly on conflict, never forcing or dropping a commit.
+  `bin/fm-update.sh --help` and `bin/fm-ff-lib.sh`'s header own the exact mechanics; do not restate them here.
 - **Only the firstmate repo and its worktrees** are touched, never `projects/`.
   It is the same sanctioned self-write as the fleet sync.
 - **Secondmates are never disrupted.**

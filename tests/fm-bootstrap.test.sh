@@ -311,6 +311,44 @@ ROWS
   pass "bootstrap reports treehouse lease + tasks-axi/quota-axi bootstrap contracts"
 }
 
+# An outstanding data/pending-autostash.meta (bin/fm-update.sh --autostash's
+# durable record, bin/fm-ff-lib.sh) must surface at session start regardless
+# of whether the session that created it ever comes back, and a clean home
+# with no record must stay silent about it.
+test_autostash_pending_reported_at_session_start() {
+  local case_dir fakebin out target sha
+  case_dir="$TMP_ROOT/autostash-pending"
+  mkdir -p "$case_dir/home/data"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  target="$case_dir/home"
+  sha="a4b50250b9dca503d22205069c49837a721fe2fb"
+  {
+    printf 'target=%s\n' "$target"
+    printf 'stash_sha=%s\n' "$sha"
+    printf 'created=2026-06-01T12:00:00Z\n'
+    printf 'message=fm-autostash: firstmate\n'
+  } > "$case_dir/home/data/pending-autostash.meta"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    "$ROOT/bin/fm-bootstrap.sh")
+
+  assert_contains "$out" "AUTOSTASH_PENDING: stash $sha since 2026-06-01T12:00:00Z - finish with: git -C $target stash apply $sha, then remove $case_dir/home/data/pending-autostash.meta" \
+    "outstanding autostash record is reported with its exact sha and remediation"
+
+  rm -f "$case_dir/home/data/pending-autostash.meta"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    "$ROOT/bin/fm-bootstrap.sh")
+  assert_not_contains "$out" "AUTOSTASH_PENDING:" "a home with no outstanding record stays silent about it"
+
+  printf 'not a valid record\n' > "$case_dir/home/data/pending-autostash.meta"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "AUTOSTASH_PENDING: unreadable record at $case_dir/home/data/pending-autostash.meta" \
+    "a record missing its stash_sha is still reported, not silently skipped"
+  rm -f "$case_dir/home/data/pending-autostash.meta"
+  pass "bootstrap reports an outstanding autostash record at session start, and stays silent without one"
+}
+
 test_no_mistakes_min_version() {
   local label version mode case_dir fakebin out missing n
   missing='MISSING: no-mistakes (install: curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh)'
@@ -1149,6 +1187,7 @@ ROWS
 }
 
 test_bootstrap_reporting
+test_autostash_pending_reported_at_session_start
 test_no_mistakes_min_version
 test_gh_axi_min_version
 test_lavish_axi_min_version

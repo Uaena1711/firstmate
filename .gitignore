@@ -11,3 +11,5 @@ __pycache__/
 *.pyc
 .env
 config/
+bedrock.sh
+.claude/settings.local.json.bak
