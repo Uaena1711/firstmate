@@ -229,9 +229,11 @@ test_flag_refused_on_non_claude_harness() {
 
 test_non_claude_harness_is_unaffected_without_the_flag() {
   local rec id out status harness
-  # kimi and pi-signed are omitted because their spawns need a full Kimi home or
-  # a signed executable on PATH; both reach the same claude-only branch as these.
-  for harness in codex opencode pi grok; do
+  # kimi, pi and pi-signed are omitted because their spawns now resolve a real
+  # executable on PATH first (a full Kimi home, or resolve_pi_executable), which
+  # this fake bin deliberately does not provide. All of them reach the same
+  # claude-only branch as the harnesses below, so coverage is unchanged.
+  for harness in codex opencode grok; do
     id="bedrock-untouched-$harness-b8"
     rec=$(make_spawn_case "bedrock-untouched-$harness" "$harness" "$id")
     read_case_record "$rec"
@@ -246,7 +248,7 @@ test_non_claude_harness_is_unaffected_without_the_flag() {
     assert_absent "$WT_DIR/.claude/settings.local.json" \
       "$harness spawn wrote claude's settings.local.json"
   done
-  pass "codex, opencode, pi, and grok spawns are untouched by Bedrock configuration"
+  pass "codex, opencode, and grok spawns are untouched by Bedrock configuration"
 }
 
 test_scout_accepts_the_flag() {
